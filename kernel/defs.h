@@ -104,12 +104,13 @@ void            yield(void);
 int             either_copyout(int user_dst, uint64 dst, void *src, uint64 len);
 int             either_copyin(void *dst, int user_src, uint64 src, uint64 len);
 void            procdump(void);
+uint64             cas(volatile void *addr , int expected , int newval);
 
 // swtch.S
 void            swtch(struct context*, struct context*);
 
 // cas.S
-int             cas(volatile void *addr , int expected , int newval);
+uint64             cas(volatile void *addr , int expected , int newval);
 
 // spinlock.c
 void            acquire(struct spinlock*);
