@@ -108,6 +108,9 @@ void            procdump(void);
 // swtch.S
 void            swtch(struct context*, struct context*);
 
+// cas.S
+int             cas(volatile void *addr , int expected , int newval);
+
 // spinlock.c
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);
