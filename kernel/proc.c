@@ -663,6 +663,34 @@ procdump(void)
   }
 }
 
+int
+set_cpu(int cpu_num)
+{
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  yield();
+  struct cpu *old_c = &cpus[p->cpu_num];
+  struct cpu *new_c = &cpus[cpu_num];
+  if(!new_c)
+  {
+    release(&p->lock);
+    return -1;
+  }
+  remove(old_c->runnableList, p);
+  push(new_c->runnableList, p);
+  p->cpu_num = cpu_num;
+  release(&p->lock);
+  return cpu_num;
+}
+
+int
+get_cpu()
+{
+  if(!myproc()->cpu_num)
+    return -1;
+  return myproc()->cpu_num;
+}
+
 void push(struct procList *list, struct proc *p)
 {
   struct procList *newHead = {0};
@@ -671,29 +699,35 @@ void push(struct procList *list, struct proc *p)
     newHead->next = list;
   } while(!cas(list, newHead->next, newHead));
 }
-struct procList *remove(struct procList *list, struct proc *p){
+struct procList *remove(struct procList *list, struct proc *p)
+{
   struct procList *first = list;
-  struct procList *second = {0};
-  while (list)
-  {
+  if(!first)
+    return;
   acquire(&first->lock);
-  second = first->next;
-  acquire(&second->lock);
-  if (second->addr == p)
+  if(first->addr == p)
   {
-    first->next = second->next;
-    second->next = 0;
-    release(&second->lock);
+    list = list->next;
+    first->next = 0;
     release(&first->lock);
-    return second;
+    return first;
   }
-  else
+  struct procList *second = second = first->next;
+  acquire(&second->lock);
+  while(second)
   {
+    if (second->addr == p)
+    {
+      first->next = second->next;
+      second->next = 0;
+      break;
+    }
     release(&first->lock);
     first = second;
-    acquire
+    second = second->next;
+    acquire(&second->lock);
   }
-  }
-  
-  
+  release(&second->lock);
+  release(&first->lock);
+  return second; 
 }
