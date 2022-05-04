@@ -26,9 +26,8 @@ extern char trampoline[]; // trampoline.S
 
 extern uint64 cas(volatile void *addr , int expected , int newval);
 
-extern void push(struct procList *list);
-extern struct procList *pop(struct procList *list);
-extern struct procList *remove(struct procList *list);
+extern void push(struct procList *list, struct proc *p);
+extern struct procList *remove(struct procList *list, struct proc *p);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -662,4 +661,39 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+void push(struct procList *list, struct proc *p)
+{
+  struct procList *newHead = {0};
+  newHead->addr = p;
+  do {
+    newHead->next = list;
+  } while(!cas(list, newHead->next, newHead));
+}
+struct procList *remove(struct procList *list, struct proc *p){
+  struct procList *first = list;
+  struct procList *second = {0};
+  while (list)
+  {
+  acquire(&first->lock);
+  second = first->next;
+  acquire(&second->lock);
+  if (second->addr == p)
+  {
+    first->next = second->next;
+    second->next = 0;
+    release(&second->lock);
+    release(&first->lock);
+    return second;
+  }
+  else
+  {
+    release(&first->lock);
+    first = second;
+    acquire
+  }
+  }
+  
+  
 }
