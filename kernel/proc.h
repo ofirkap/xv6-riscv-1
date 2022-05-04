@@ -111,5 +111,6 @@ struct proc {
 
 struct procList {
   uint64 *addr;               // Address of current procces
-  struct procList *next;      // Next proc
+  volatile struct procList *next;      // Next proc
+  struct spinlock lock;
 };
