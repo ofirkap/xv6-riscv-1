@@ -10,6 +10,10 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
+struct procList *unusedProcs = {0};
+struct procList *sleepingProcs = {0};
+struct procList *zombieProcs = {0};
+
 struct proc *initproc;
 
 int nextpid = 1;
@@ -21,6 +25,10 @@ static void freeproc(struct proc *p);
 extern char trampoline[]; // trampoline.S
 
 extern uint64 cas(volatile void *addr , int expected , int newval);
+
+extern void push(struct procList *list);
+extern struct procList *pop(struct procList *list);
+extern struct procList *remove(struct procList *list);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
