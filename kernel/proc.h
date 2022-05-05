@@ -24,7 +24,7 @@ struct cpu {
   struct context context;         // swtch() here to enter scheduler().
   int noff;                       // Depth of push_off() nesting.
   int intena;                     // Were interrupts enabled before push_off()?
-  struct list runnable_list;
+  int runnable_list;
 };
 
 extern struct cpu cpus[NCPU];
@@ -108,12 +108,7 @@ struct proc {
   char name[16];               // Process name (debugging)
   int cpu_num;                 // Number of the CPU that the process is running on
   int next;                     //
-  spinlock node_lock;
+  struct spinlock node_lock;
   int index;
 };
 
-struct list{
-  int head; //
-  int tail; //
-  int size; // Number of elements in the list
-}
