@@ -24,7 +24,7 @@ struct cpu {
   struct context context;         // swtch() here to enter scheduler().
   int noff;                       // Depth of push_off() nesting.
   int intena;                     // Were interrupts enabled before push_off()?
-  struct procList *runnableList;  //List of runnable processes for this CPU.
+  struct list runnable_list;
 };
 
 extern struct cpu cpus[NCPU];
@@ -106,11 +106,14 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
-  int cpu_num;                // Number of the CPU that the process is running on
+  int cpu_num;                 // Number of the CPU that the process is running on
+  int next;                     //
+  spinlock node_lock;
+  int index;
 };
 
-struct procList {
-  uint64 *addr;                     // Address of current procces
-  volatile struct procList *next;   // Next proc
-  struct spinlock lock;             // Mutex to ensure safe removal of nodes from the list
-};
+struct list{
+  int head; //
+  int tail; //
+  int size; // Number of elements in the list
+}

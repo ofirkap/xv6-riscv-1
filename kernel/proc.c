@@ -11,9 +11,9 @@ struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
 
-struct procList *unusedProcs = {0};
-struct procList *sleepingProcs = {0};
-struct procList *zombieProcs = {0};
+struct list unused_list = {.head = -1, .tail = -1, .size = 0};
+struct list zombie_list = {.head = -1, .tail = -1, .size = 0};
+struct list sleeping_list = {.head = -1, .tail = -1, .size = 0};
 
 struct proc *initproc;
 
@@ -27,8 +27,9 @@ extern char trampoline[]; // trampoline.S
 
 extern uint64 cas(volatile void *addr , int expected , int newval);
 
-extern void push(struct procList *list, struct proc *p);
-extern struct procList *remove(struct procList *list, struct proc *p);
+extern int push(struct list *lst, struct proc *p);
+extern int pop(struct list *lst);
+extern int remove(struct list *lst, struct proc *p);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -60,9 +61,12 @@ procinit(void)
   
   initlock(&pid_lock, "nextpid");
   initlock(&wait_lock, "wait_lock");
+  int index = 0;
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
+      p->index = index;
+      index++;
   }
 }
 
@@ -128,6 +132,8 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->cpu_num;
+  p->next = -1;
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -172,6 +178,7 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  p->cpu_num;
   remove(zombieProcs,p);
   push(unusedProcs, p);
   p->state = UNUSED;
@@ -576,11 +583,11 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
-  struct procList *first = sleepingProcs;
+  int *first = sleepingProcs;
   if(!first)
     return;
   acquire(&first->lock);
-  struct procList *second = sleepingProcs;
+  int *second = sleepingProcs;
   while(second->next)
   {
     second = second->next;
@@ -600,7 +607,7 @@ wakeup(void *chan)
     }
   }
  
-  struct procList *second = second = first->next;
+  int *second = second = first->next;
   acquire(&second->lock);
   while(second)
   {
@@ -759,18 +766,37 @@ get_cpu()
   return myproc()->cpu_num;
 }
 
-void push(struct procList *list, struct proc *p)
+int push(struct list *lst, struct proc *p)
 {
-  struct procList *newHead = {0};
-  newHead->addr = p;
+  int new_tail;
+  if(*tail == -1)
+  {
+
+  }
   do {
-    newHead->next = list;
-  } while(!cas(list, newHead->next, newHead));
+    struct proc *old_p = &proc[*tail];
+    old_p->next = p->index;
+    new_tail = p->index;
+  } while(!cas(tail, old_p->index, new_tail));
+  return new_tail;
 }
-struct procList *remove(struct procList *list, struct proc *p)
+
+int pop(int *head)
 {
-  struct procList *first = list;
-  if(!first)
+  if(*head == -1)
+    return -1;
+  int new_head;
+  do {
+    struct proc *old_p = &proc[*head];
+    new_head = old_p->next;
+  } while(!cas(head, old_p->index, new_head));
+  return new_head;
+}
+
+int remove(int *head, struct proc *p)
+{
+  int *first = head;
+  if(first == -1)
     return;
   acquire(&first->lock);
   if(first->addr == p)
@@ -780,7 +806,7 @@ struct procList *remove(struct procList *list, struct proc *p)
     release(&first->lock);
     return first;
   }
-  struct procList *second = second = first->next;
+  int *second = second = first->next;
   acquire(&second->lock);
   while(second)
   {
