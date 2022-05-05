@@ -18,5 +18,8 @@
 #define SYS_mknod  17
 #define SYS_unlink 18
 #define SYS_link   19
-#define SYS_mkdir  20
-#define SYS_close  21
+#define SYS_mkdir   20
+#define SYS_close   21
+#define SYS_set_cpu 22
+#define SYS_get_cpu 23
+
