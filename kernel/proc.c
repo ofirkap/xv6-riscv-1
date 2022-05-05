@@ -5,6 +5,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "stdlib.h"
 
 struct cpu cpus[NCPU];
 
@@ -171,6 +172,8 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
+  remove(zombieProcs,p);
+  push(unusedProcs, p);
   p->state = UNUSED;
 }
 
@@ -250,6 +253,8 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
+  // struct cpu *c = &cpus[0];
+  // c->push(c);
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -317,9 +322,13 @@ fork(void)
 
   acquire(&wait_lock);
   np->parent = p;
+  np->cpu_num = p->cpu_num;
   release(&wait_lock);
 
   acquire(&np->lock);
+  remove(unusedProcs, np);
+  struct cpu *c = &cpus[np->cpu_num];
+  push(&c->runnableList, np);
   np->state = RUNNABLE;
   release(&np->lock);
 
@@ -377,6 +386,7 @@ exit(int status)
   acquire(&p->lock);
 
   p->xstate = status;
+  push(zombieProcs, p);
   p->state = ZOMBIE;
 
   release(&wait_lock);
@@ -453,22 +463,20 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
 
-    for(p = proc; p < &proc[NPROC]; p++) {
-      acquire(&p->lock);
-      if(p->state == RUNNABLE) {
+    struct proc *p = remove(mycpu()->runnableList, p);
+      if(p) {
+        acquire(&p->lock);
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
-
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
+        release(&p->lock);
       }
-      release(&p->lock);
-    }
   }
 }
 
@@ -537,7 +545,6 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -550,6 +557,8 @@ sleep(void *chan, struct spinlock *lk)
 
   // Go to sleep.
   p->chan = chan;
+  remove(mycpu()->runnableList, p);
+  push(sleepingProcs, p);
   p->state = SLEEPING;
 
   sched();
@@ -567,12 +576,71 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
+  struct procList *first = sleepingProcs;
+  if(!first)
+    return;
+  acquire(&first->lock);
+  struct procList *second = sleepingProcs;
+  while(second->next)
+  {
+    second = second->next;
+    acquire(&second->lock);
+    struct proc *p = second->addr;
+    if(p->chan == chan)
+    {
+      first->next = second->next;
+      second = second->next;
+      release(&second->lock);
+      second->next = 0;
+      struct cpu *c = &cpus[p->cpu_num];
+      push(c->runnableList, p);
+
+      // release(&first->lock);
+      // return first;
+    }
+  }
+ 
+  struct procList *second = second = first->next;
+  acquire(&second->lock);
+  while(second)
+  {
+    if (second->addr == p)
+    {
+      first->next = second->next;
+      second->next = 0;
+      break;
+    }
+    release(&first->lock);
+    first = second;
+    second = second->next;
+    if(!second)
+      break;
+    acquire(&second->lock);
+  }
+  if(second)
+  {
+    release(&second->lock);
+    release(&first->lock);
+    return second;
+  return second; 
+    return second;
+  return second; 
+    return second;
+  }
+  release(&first->lock);
+  return first; 
+}
+
+
+  
   struct proc *p;
 
   for(p = proc; p < &proc[NPROC]; p++) {
     if(p != myproc()){
       acquire(&p->lock);
       if(p->state == SLEEPING && p->chan == chan) {
+        remove(sleepingProcs, p);
+        push(mycpu()->runnableList, p);
         p->state = RUNNABLE;
       }
       release(&p->lock);
@@ -725,9 +793,20 @@ struct procList *remove(struct procList *list, struct proc *p)
     release(&first->lock);
     first = second;
     second = second->next;
+    if(!second)
+      break;
     acquire(&second->lock);
   }
-  release(&second->lock);
-  release(&first->lock);
+  if(second)
+  {
+    release(&second->lock);
+    release(&first->lock);
+    return second;
   return second; 
+    return second;
+  return second; 
+    return second;
+  }
+  release(&first->lock);
+  return first; 
 }
