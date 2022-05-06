@@ -66,7 +66,7 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
       p->index = index;
-      push(unused_list, p);
+      push(&unused_list, p);
       index++;
   }
 }
@@ -118,7 +118,7 @@ allocpid() {
 static struct proc*
 allocproc(void)
 {
-  int i = pop(unused_list);
+  int i = pop(&unused_list);
   if(i == -1)
     return 0;
   
@@ -127,7 +127,7 @@ allocproc(void)
 
   p->pid = allocpid();
   p->state = USED;
-  p->cpu_num;
+  p->cpu_num = 0;
   p->next = -1;
 
   // Allocate a trapframe page.
@@ -173,9 +173,9 @@ freeproc(struct proc *p)
   p->chan = 0;
   p->killed = 0;
   p->xstate = 0;
-  p->cpu_num;
-  remove(zombie_list,p);
-  push(unused_list, p);
+  p->cpu_num = -1;
+  remove(&zombie_list,p);
+  push(&unused_list, p);
   p->state = UNUSED;
 }
 
@@ -256,7 +256,8 @@ userinit(void)
   p->cwd = namei("/");
 
   struct cpu *c = &cpus[0];
-  push(c->runnable_list, p->index);
+  int *list = &c->runnable_list;
+  push(list, p);
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -328,7 +329,7 @@ fork(void)
   release(&wait_lock);
 
   acquire(&np->lock);
-  remove(unused_list, np);
+  remove(&unused_list, np);
   struct cpu *c = &cpus[np->cpu_num];
   push(&c->runnable_list, np);
   np->state = RUNNABLE;
@@ -388,7 +389,7 @@ exit(int status)
   acquire(&p->lock);
 
   p->xstate = status;
-  push(zombie_list, p);
+  push(&zombie_list, p);
   p->state = ZOMBIE;
 
   release(&wait_lock);
@@ -465,9 +466,10 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
     
-    p = pop(c->runnable_list);
-    if(p != -1) 
+    int i = pop(&c->runnable_list);
+    if(i != -1) 
     {
+      p = &proc[i];
       acquire(&p->lock);
       // Switch to chosen process.  It is the process's job
       // to release its lock and then reacquire it
@@ -516,8 +518,9 @@ yield(void)
 {
   struct proc *p = myproc();
   acquire(&p->lock);
-  struct cpu *c = &cpus[p->cpu_num];
-  push(c->runnable_list, p);
+  int i = p->cpu_num;
+  struct cpu *c = &cpus[i];
+  push(&c->runnable_list, p);
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
@@ -562,8 +565,8 @@ sleep(void *chan, struct spinlock *lk)
 
   // Go to sleep.
   p->chan = chan;
-  remove(mycpu()->runnable_list, p);
-  push(sleeping_list, p);
+  remove(&mycpu()->runnable_list, p);
+  push(&sleeping_list, p);
   p->state = SLEEPING;
 
   sched();
@@ -590,14 +593,17 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
-  int next = sleeping_list;
-  while (next != -1)
+  int curr = sleeping_list;
+  int next;
+  struct proc *p;
+  while (curr && curr != -1)
   {
-    struct proc *p = &proc[next];
+    p = &proc[curr];
     acquire(&p->lock);
-    if (p->chan == chan)
-      remove(sleeping_list, p);
     next = p->next;
+    if (p->chan == chan)
+      remove(&sleeping_list, p);
+    curr = next;
     release(&p->lock);
   }
 }
@@ -808,12 +814,12 @@ set_cpu(int cpu_num)
     return -1;
   }
   struct cpu *new_c = &cpus[cpu_num];
-  remove(old_c->runnable_list, p);
+  remove(&old_c->runnable_list, p);
   if(!new_c->runnable_list)
   {
     old_c->runnable_list = -1;
   }
-  push(new_c->runnable_list, p);
+  push(&new_c->runnable_list, p);
   p->cpu_num = cpu_num;
   release(&p->lock);
   return cpu_num;
