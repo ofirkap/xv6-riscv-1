@@ -25,6 +25,7 @@ struct cpu {
   int noff;                       // Depth of push_off() nesting.
   int intena;                     // Were interrupts enabled before push_off()?
   int runnable_list;
+  struct spinlock list_lock;
 };
 
 extern struct cpu cpus[NCPU];

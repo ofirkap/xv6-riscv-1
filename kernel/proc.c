@@ -12,8 +12,12 @@ struct cpu cpus[NCPU];
 struct proc proc[NPROC];
 
 int unused_list = -1;
+struct spinlock unused_list_lock;
 int zombie_list = -1;
+struct spinlock zombie_list_lock;
 int sleeping_list = -1;
+struct spinlock sleeping_list_lock;
+
 
 struct proc *initproc;
 
@@ -27,7 +31,7 @@ extern char trampoline[]; // trampoline.S
 
 extern uint64 cas(volatile void *addr , int expected , int newval);
 
-extern int push(int *head, struct proc *p);
+extern void push(int *head, struct proc *p, struct spinlock *lock);
 extern int pop(int *head);
 extern int remove(int *head, struct proc* p);
 
@@ -69,6 +73,9 @@ procinit(void)
     push(&unused_list, p);
     index++;
   }
+  initlock(&unused_list_lock, "unused_list");
+  initlock(&zombie_list_lock, "zombie_list");
+  initlock(&sleeping_list_lock, "sleeping_list");
 }
 
 // Must be called with interrupts disabled,
@@ -833,8 +840,9 @@ get_cpu()
   return myproc()->cpu_num;
 }
 
-int push(int *head, struct proc *p)
+void push(int *head, struct proc *p, struct spinlock *list_lock)
 {
+  acquire(list_lock);
   if(*head != -1)
   {
     struct proc *node = &proc[*head];
@@ -847,9 +855,9 @@ int push(int *head, struct proc *p)
   }
   else
   {
-    
+    p->next = *head;
+    *head = p->index;
   }
-  return p->index;
 }
 
 int pop(int *head)
