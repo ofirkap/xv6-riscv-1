@@ -66,6 +66,7 @@ procinit(void)
       initlock(&p->lock, "proc");
       p->kstack = KSTACK((int) (p - proc));
       p->index = index;
+      push(unused_list, p);
       index++;
   }
 }
@@ -117,19 +118,13 @@ allocpid() {
 static struct proc*
 allocproc(void)
 {
-  struct proc *p;
+  int i = pop(unused_list);
+  if(i == -1)
+    return 0;
+  
+  struct proc *p = &proc[i];
+  acquire(&p->lock);
 
-  for(p = proc; p < &proc[NPROC]; p++) {
-    acquire(&p->lock);
-    if(p->state == UNUSED) {
-      goto found;
-    } else {
-      release(&p->lock);
-    }
-  }
-  return 0;
-
-found:
   p->pid = allocpid();
   p->state = USED;
   p->cpu_num;
@@ -521,6 +516,8 @@ yield(void)
 {
   struct proc *p = myproc();
   acquire(&p->lock);
+  struct cpu *c = &cpus[p->cpu_num];
+  push(c->runnable_list, p);
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
@@ -578,6 +575,75 @@ sleep(void *chan, struct spinlock *lk)
   release(&p->lock);
   acquire(lk);
 }
+
+
+// void
+// remove_and_push_to_cpu(int *list, struct proc *p)
+// {
+//   remove(list, p);
+//   struct cpu *c = &cpus[p->cpu_num];
+//   push(c->runnable_list, p);
+//   p->state = RUNNABLE;
+// }
+// Wake up all processes sleeping on chan.
+// Must be called without any p->lock.
+void
+wakeup(void *chan)
+{
+  int next = sleeping_list;
+  while (next != -1)
+  {
+    struct proc *p = &proc[next];
+    acquire(&p->lock);
+    if (p->chan == chan)
+      remove(sleeping_list, p);
+    next = p->next;
+    release(&p->lock);
+  }
+}
+// {
+//   if(sleeping_list == -1)
+//     return;
+//   struct proc *prev = &proc[sleeping_list];
+//   if(prev->next != -1)
+//   {
+//     struct proc *curr;
+//     do
+//     {
+//       acquire(&prev->lock);
+//       if(prev->chan == chan)
+//       {
+//         remove_and_push_to_cpu(prev->index, prev);
+//         prev = &proc[prev->next];
+//       }
+//       release(&prev->lock);
+//       if(prev->next != -1)
+//       {
+//         curr = &proc[prev->next];
+//         acquire(&curr->lock);
+//         if(curr->chan == chan)
+//         {
+//           remove_and_push_to_cpu(prev->index, curr);
+//           release(&curr->lock);
+//         }
+//         else
+//         {
+//           release(&curr->lock);
+//           prev = curr;
+//         }
+//       }
+//     } while (prev->next != -1);
+//   }
+//   else
+//   {
+//     acquire(&prev->lock);
+//     if(prev->chan == chan)
+//     {
+//       remove_and_push_to_cpu(prev->index, prev);
+//     }
+//     release(&prev->lock);
+//   }
+// }
 
 // Wake up all processes sleeping on chan.
 // Must be called without any p->lock.
@@ -809,11 +875,11 @@ int pop(int *head)
     p2 = &proc[second];
     acquire(&p2->node_lock);
   }
-    p1->next = p2->next;
-    release(&p2->node_lock);
-    release(&p1->node_lock);
-    return p2->index;
-  }
+  p1->next = p2->next;
+  release(&p2->node_lock);
+  release(&p1->node_lock);
+  return p2->index;
+}
  
 int remove(int *head, struct proc *p)
 {
