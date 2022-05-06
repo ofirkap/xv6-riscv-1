@@ -63,11 +63,11 @@ procinit(void)
   initlock(&wait_lock, "wait_lock");
   int index = 0;
   for(p = proc; p < &proc[NPROC]; p++) {
-      initlock(&p->lock, "proc");
-      p->kstack = KSTACK((int) (p - proc));
-      p->index = index;
-      push(&unused_list, p);
-      index++;
+    initlock(&p->lock, "proc");
+    p->kstack = KSTACK((int) (p - proc));
+    p->index = index;
+    push(&unused_list, p);
+    index++;
   }
 }
 
@@ -256,8 +256,7 @@ userinit(void)
   p->cwd = namei("/");
 
   struct cpu *c = &cpus[0];
-  int *list = &c->runnable_list;
-  push(list, p);
+  push(&c->runnable_list, p);
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -462,6 +461,7 @@ scheduler(void)
   struct cpu *c = mycpu();
   
   c->proc = 0;
+  printf("before loop of cpu %d\n", cpuid());
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
@@ -835,25 +835,21 @@ get_cpu()
 
 int push(int *head, struct proc *p)
 {
-  int new_head;
-  if(*head == -1)
+  if(*head != -1)
   {
-    do
-     {
-      new_head = p->index;
-     } while(!cas(head, -1, new_head));
+    struct proc *node = &proc[*head];
+    acquire(&node->node_lock);
+    acquire(&p->node_lock);
+    p->next = *head;
+    *head = p->index;
+    release(&p->node_lock);
+    release(&node->node_lock);
   }
   else
-  { 
-    struct proc *old_p;
-    do
-     {
-      old_p = &proc[*head];
-      p->next = old_p->index;
-      new_head = p->index;
-    } while(!cas(head, old_p->index, new_head));
+  {
+    
   }
-  return new_head;
+  return p->index;
 }
 
 int pop(int *head)
