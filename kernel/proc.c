@@ -145,6 +145,7 @@ allocproc(void)
   p->state = USED;
   p->cpu_num = 0;
   p->next = -1;
+  printf("alloc: proc %d\n", p->index);
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -178,6 +179,7 @@ allocproc(void)
 static void
 freeproc(struct proc *p)
 {
+  printf("freeproc: proc %d\n", p->index);
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -405,7 +407,7 @@ exit(int status)
   p->xstate = status;
   push(&zombie_list, p, &zombie_list_lock);
   p->state = ZOMBIE;
-
+  printf("exit: proc %d\n", p->index);
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -482,6 +484,7 @@ scheduler(void)
     int i = pop(&c->runnable_list);
     if(i != -1) 
     {
+      printf("sched: proc %d\n", i);
       p = &proc[i];
       acquire(&p->lock);
       // Switch to chosen process.  It is the process's job
@@ -532,6 +535,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   struct cpu *c = &cpus[p->cpu_num];
+  printf("yield: proc %d\n", p->index);
   push(&c->runnable_list, p, &c->list_lock);
   p->state = RUNNABLE;
   sched();
@@ -578,6 +582,7 @@ sleep(void *chan, struct spinlock *lk)
   // Go to sleep.
   p->chan = chan;
   //remove(&runnable_list, p);
+  printf("sleep: proc %d\n", p->index);
   push(&sleeping_list, p, &sleeping_list_lock);
   p->state = SLEEPING;
 
@@ -608,6 +613,7 @@ wakeup(void *chan)
     {
       remove(&sleeping_list, p);
       struct cpu *c = &cpus[p->cpu_num];
+      printf("wakeup: proc %d\n", p->index);
       push(&c->runnable_list, p, &c->list_lock);
     }
     curr = next;
@@ -701,24 +707,20 @@ procdump(void)
 int
 set_cpu(int cpu_num)
 {
-  // struct proc *p = myproc();
-  // acquire(&p->lock);
-  // yield();
-  // struct cpu *old_c = &cpus[p->cpu_num];
-  // if(cpu_num < 0 || cpu_num > NCPU - 1)
-  // {
-  //   release(&p->lock);
-  //   return -1;
-  // }
-  // struct cpu *new_c = &cpus[cpu_num];
-  // remove(&runnable_list, p);
-  // if(!runnable_list)
-  // {
-  //   old_c->runnable_list = -1;
-  // }
-  // push(&runnable_list, p, &runnable_list_lock);
-  // p->cpu_num = cpu_num;
-  // release(&p->lock);
+  struct proc *p = myproc();
+  acquire(&p->lock);
+  yield();
+  struct cpu *old_c = &cpus[p->cpu_num];
+  if(cpu_num < 0 || cpu_num > NCPU - 1)
+  {
+    release(&p->lock);
+    return -1;
+  }
+  struct cpu *new_c = &cpus[cpu_num];
+  remove(&old_c->runnable_list, p);
+  push(&new_c->runnable_list, p, &new_c->list_lock);
+  p->cpu_num = cpu_num;
+  release(&p->lock);
   return 0;
 }
 
