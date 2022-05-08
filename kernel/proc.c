@@ -17,8 +17,6 @@ int zombie_list = -1;
 struct spinlock zombie_list_lock;
 int sleeping_list = -1;
 struct spinlock sleeping_list_lock;
-int runnable_list = -1;
-struct spinlock runnable_list_lock;
 
 
 struct proc *initproc;
@@ -63,6 +61,15 @@ proc_mapstacks(pagetable_t kpgtbl) {
 void
 procinit(void)
 {
+
+  //initialize CPU's runnable lists and locks
+  struct cpu *c;
+  for(c = cpus; c < &cpus[NCPU];c++)
+  {
+    initlock(&c->list_lock, "runnable_list");
+    c->runnable_list = -1;
+  }
+
   struct proc *p;
   
   initlock(&pid_lock, "nextpid");
@@ -128,7 +135,6 @@ static struct proc*
 allocproc(void)
 {
   int i = pop(&unused_list);
-  printf("i = %d\n", i);
   if(i == -1)
     return 0;
   
@@ -163,7 +169,6 @@ allocproc(void)
 
   //struct cpu *c = &cpus[p->cpu_num];
   //push(&c->runnable_list, p, c->list_lock);
-  printf("index of p is %d\n", p->index);
   return p;
 }
 
@@ -268,8 +273,8 @@ userinit(void)
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
 
-  //struct cpu *c = &cpus[0];
-  push(&runnable_list, p, &runnable_list_lock);
+  struct cpu *c = &cpus[0];
+  push(&c->runnable_list, p, &c->list_lock);
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -303,19 +308,16 @@ fork(void)
   int i, pid;
   struct proc *np;
   struct proc *p = myproc();
-  printf("current p is %d\n", p->index);
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
   }
-  printf("new process after fork is %d\n", np->index);
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
     return -1;
   }
-  printf("after uvmcopy\n");
   np->sz = p->sz;
 
   // copy saved user registers.
@@ -329,7 +331,6 @@ fork(void)
     if(p->ofile[i])
       np->ofile[i] = filedup(p->ofile[i]);
   np->cwd = idup(p->cwd);
-  printf("after increment reference\n");
   safestrcpy(np->name, p->name, sizeof(p->name));
 
   pid = np->pid;
@@ -342,11 +343,9 @@ fork(void)
   release(&wait_lock);
 
   acquire(&np->lock);
-  printf("np index is %d\n", np->index);
   //printf("remove p is %d\n",pop(&unused_list));
-  //struct cpu *c = &cpus[np->cpu_num];
-  printf("p is %d\n", np->index);
-  push(&runnable_list, np, &runnable_list_lock);
+  struct cpu *c = &cpus[np->cpu_num];
+  push(&c->runnable_list, np, &c->list_lock);
   np->state = RUNNABLE;
   release(&np->lock);
 
@@ -480,11 +479,10 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    int i = pop(&runnable_list);
+    int i = pop(&c->runnable_list);
     if(i != -1) 
     {
       p = &proc[i];
-      printf("p index = %d\n", p->index);
       acquire(&p->lock);
       // Switch to chosen process.  It is the process's job
       // to release its lock and then reacquire it
@@ -532,12 +530,9 @@ void
 yield(void)
 {
   struct proc *p = myproc();
-  printf("p->index = %d, p->next = ", p->index, p->next);
   acquire(&p->lock);
-  //sint i = p->cpu_num;
-  //struct cpu *c = &cpus[i];
-  push(&runnable_list, p, &runnable_list_lock);
-  printf("first in runnable is %d", runnable_list);
+  struct cpu *c = &cpus[p->cpu_num];
+  push(&c->runnable_list, p, &c->list_lock);
   p->state = RUNNABLE;
   sched();
   release(&p->lock);
@@ -570,7 +565,6 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  printf("sleep!\n");
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -583,7 +577,7 @@ sleep(void *chan, struct spinlock *lk)
 
   // Go to sleep.
   p->chan = chan;
-  remove(&runnable_list, p);
+  //remove(&runnable_list, p);
   push(&sleeping_list, p, &sleeping_list_lock);
   p->state = SLEEPING;
 
@@ -608,14 +602,13 @@ wakeup(void *chan)
   while (curr != -1)
   {
     p = &proc[curr];
-    printf("wakeup, pid = %d\n", p->index);
     acquire(&p->lock);
     next = p->next;
-    printf("next = %d\n", next);
     if (p->chan == chan)
     {
       remove(&sleeping_list, p);
-      push(&runnable_list, p, &runnable_list_lock);
+      struct cpu *c = &cpus[p->cpu_num];
+      push(&c->runnable_list, p, &c->list_lock);
     }
     curr = next;
     release(&p->lock);
@@ -741,7 +734,7 @@ void push(int *head, struct proc *p, struct spinlock *list_lock)
 {
   acquire(list_lock);
   acquire(&p->node_lock);
-  printf("push list: %x proc: %d\n", head, p->index);
+  //printf("push list: %x proc: %d\n", head, p->index);
   p->next = *head;
   *head = p->index;
   release(&p->node_lock);
@@ -774,25 +767,23 @@ int pop(int *head)
   p1->next = p2->next;
   release(&p2->node_lock);
   release(&p1->node_lock);
-  printf("pop list: %x proc: %d\n", head, p2->index);
+  //printf("pop list: %x proc: %d\n", head, p2->index);
   return p2->index;
 }
  
 int remove(int *head, struct proc *p)
 {
   int first = *head;
-  printf("head of %x is %d\n",head, first);
   if(first == -1)
     return -1;  
   struct proc *p1 = &proc[first];
   acquire(&p1->node_lock);
   if(p1->index == p->index)
   {
-    printf("p->next is %d\n", p->next);
+    //printf("p->next is %d\n", p->next);
     *head = -1;
     p1->next = -1;
     release(&p1->node_lock);
-    printf("p->index is %d\n", p->index);
     return p->index;
   }
   int second = p1->next;
