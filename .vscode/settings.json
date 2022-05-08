@@ -3,6 +3,7 @@
         "memlayout.h": "c",
         "__node_handle": "c",
         "queue": "c",
-        "iterator": "c"
+        "iterator": "c",
+        "cstdio": "c"
     }
 }
