@@ -16,18 +16,25 @@ int *sp;
 #define push(sp, n) (*((sp)++) = (n))
 #define pop(sp) (*--(sp))
 
-
+void testCAS() {
+    int forks = 5;
+    for (int i = 0; i < forks; i++) {
+        fork();
+    }
+    printf("PID: %d\n", getpid());
+}
 int
 main(int argc, char *argv[])
 {
-    sp = stack; /* initialize */
-    for (int i = 0; i < 2; i++) {
-       push(sp,fork());
-    }
-    sleep(10);
+    testCAS();
+    // sp = stack; /* initialize */
+    // for (int i = 0; i < 2; i++) {
+    //    push(sp,fork());
+    // }
+    // sleep(10);
 
-    for (int i = 0; i < 10; i++)
-        printf("%d, ", pop(sp));
+    // for (int i = 0; i < 10; i++)
+    //     printf("%d, ", pop(sp));
 
     exit(0);
 }
