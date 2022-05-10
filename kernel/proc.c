@@ -8,13 +8,13 @@
 #include "stdlib.h"
 
 struct cpu cpus[NCPU];
-  static char *states[] = {
-  [UNUSED]    "unused",
-  [SLEEPING]  "sleep ",
-  [RUNNABLE]  "runble",
-  [RUNNING]   "run   ",
-  [ZOMBIE]    "zombie"
-  };
+  // static char *states[] = {
+  // [UNUSED]    "unused",
+  // [SLEEPING]  "sleep ",
+  // [RUNNABLE]  "runble",
+  // [RUNNING]   "run   ",
+  // [ZOMBIE]    "zombie"
+  // };
 struct proc proc[NPROC];
 
 int unused_list = -1;
@@ -38,8 +38,8 @@ extern char trampoline[]; // trampoline.S
 extern uint64 cas(volatile void *addr , int expected , int newval);
 
 extern void push(int *head, struct proc *p, struct spinlock *lock);
-extern int pop(int *head);
-extern int remove(int *head, struct proc* p);
+extern int pop(int *head, struct spinlock *list_lock);
+extern int remove(int *head, struct proc* p, struct spinlock *list_lock);
 
 // helps ensure that wakeups of wait()ing
 // parents are not lost. helps obey the
@@ -143,7 +143,7 @@ allocpid() {
 static struct proc*
 allocproc(void)
 {
-  int i = pop(&unused_list);
+  int i = pop(&unused_list, &unused_list_lock);
   if(i == -1)
     return 0;
   
@@ -154,7 +154,7 @@ allocproc(void)
   p->state = USED;
   p->cpu_num = 0;
   p->next = -1;
-  printf("alloc: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
+  //printf("alloc: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -186,7 +186,7 @@ allocproc(void)
 static void
 freeproc(struct proc *p)
 {
-  printf("freeproc: proc %d state %s\n", p->index, states[p->state]);
+  //printf("freeproc: proc %d state %s\n", p->index, states[p->state]);
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -201,7 +201,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->cpu_num = -1;
-  remove(&zombie_list,p);
+  remove(&zombie_list,p, &zombie_list_lock);
   push(&unused_list, p, &unused_list_lock);
   p->state = UNUSED;
 }
@@ -322,7 +322,7 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
-  printf("fork : from %d state %s to %d state %s\n", p->index, states[p->state], np->index, states[np->state]);
+  //printf("fork : from %d state %s to %d state %s\n", p->index, states[p->state], np->index, states[np->state]);
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -415,7 +415,7 @@ exit(int status)
   p->xstate = status;
   push(&zombie_list, p, &zombie_list_lock);
   p->state = ZOMBIE;
-  printf("exit: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
+  //printf("exit: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -489,11 +489,11 @@ scheduler(void)
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
-    int i = pop(&c->runnable_list);
+    int i = pop(&c->runnable_list, &c->list_lock);
     if(i != -1) 
     {
       p = &proc[i];
-      printf("sched: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
+      //printf("sched: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
       acquire(&p->lock);
       // Switch to chosen process.  It is the process's job
       // to release its lock and then reacquire it
@@ -543,7 +543,7 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   struct cpu *c = &cpus[p->cpu_num];
-  printf("yield: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
+  //printf("yield: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   push(&c->runnable_list, p, &c->list_lock);
   p->state = RUNNABLE;
   sched();
@@ -589,7 +589,7 @@ sleep(void *chan, struct spinlock *lk)
 
   // Go to sleep.
   p->chan = chan;
-  printf("sleep: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
+  //printf("sleep: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   push(&sleeping_list, p, &sleeping_list_lock);
   p->state = SLEEPING;
 
@@ -608,14 +608,19 @@ sleep(void *chan, struct spinlock *lk)
 void
 wakeup(void *chan)
 {
+  acquire(&sleeping_list_lock);
   if(sleeping_list == -1)
-    return;  
+  {
+    release(&sleeping_list_lock);
+    return;
+  }
   struct proc *p1 = &proc[sleeping_list];
   acquire(&p1->lock);
   acquire(&p1->node_lock);
   while(p1->chan == chan)
   {
     sleeping_list = p1->next;
+    release(&sleeping_list_lock);
     p1->next = -1;
     release(&p1->node_lock);
     struct cpu *c = &cpus[p1->cpu_num];
@@ -623,12 +628,14 @@ wakeup(void *chan)
     push(&c->runnable_list, p1, &c->list_lock);
     p1->state = RUNNABLE;
     release(&p1->lock);
-    if(p1->next == -1)
+    if(sleeping_list == -1)
       return;
-    p1 = &proc[p1->next];
+    p1 = &proc[sleeping_list];
     acquire(&p1->lock);
     acquire(&p1->node_lock);
+    acquire(&sleeping_list_lock);
   }
+  release(&sleeping_list_lock);
   struct proc *p2;
   while(p1->next != -1)
   {
@@ -641,7 +648,7 @@ wakeup(void *chan)
       p2->next = -1;
       release(&p2->node_lock);
       struct cpu *c = &cpus[p2->cpu_num];
-      printf("wakup: proc %d cpu %d state %s\n", p1->index, p1->cpu_num, states[p1->state]);
+      //printf("wakup: proc %d cpu %d state %s\n", p1->index, p1->cpu_num, states[p1->state]);
       push(&c->runnable_list, p2, &c->list_lock);
       p2->state = RUNNABLE;
       release(&p2->lock);
@@ -753,7 +760,7 @@ set_cpu(int cpu_num)
     return -1;
   }
   struct cpu *new_c = &cpus[cpu_num];
-  remove(&old_c->runnable_list, p);
+  remove(&old_c->runnable_list, p, &old_c->list_lock);
   push(&new_c->runnable_list, p, &new_c->list_lock);
   p->cpu_num = cpu_num;
   release(&p->lock);
@@ -779,11 +786,15 @@ void push(int *head, struct proc *p, struct spinlock *list_lock)
   release(list_lock);
 }
 
-int pop(int *head)
+int pop(int *head, struct spinlock *list_lock)
 {
+  acquire(list_lock);
   int first = *head;
   if(first == -1)
+  {
+    release(list_lock);
     return -1;  
+  }
   struct proc *p1 = &proc[first];
   acquire(&p1->node_lock);
   if(p1->next == -1)
@@ -791,8 +802,10 @@ int pop(int *head)
     *head = p1->next;
     p1->next = -1;
     release(&p1->node_lock);
+    release(list_lock);
     return p1->index;
   }
+  release(list_lock);
   struct proc *p2 = &proc[p1->next];
   acquire(&p2->node_lock);
   while(p2->next != -1)
@@ -809,11 +822,15 @@ int pop(int *head)
   return p2->index;
 }
  
-int remove(int *head, struct proc *p)
+int remove(int *head, struct proc *p, struct spinlock *list_lock)
 {
+  acquire(list_lock);
   int first = *head;
   if(first == -1)
+  {
+    release(list_lock);
     return -1;  
+  }
   struct proc *p1 = &proc[first];
   acquire(&p1->node_lock);
   if(p1->index == p->index)
@@ -822,8 +839,10 @@ int remove(int *head, struct proc *p)
     *head = p1->next;
     p1->next = -1;
     release(&p1->node_lock);
+    release(list_lock);
     return p->index;
   }
+  release(list_lock);
   int second = p1->next;
   if(second == -1)
     return -1;
