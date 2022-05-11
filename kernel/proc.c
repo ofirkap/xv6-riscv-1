@@ -23,7 +23,7 @@ int zombie_list = -1;
 struct spinlock zombie_list_lock;
 int sleeping_list = -1;
 struct spinlock sleeping_list_lock;
-
+u_int64_t least_used_cpu = 0;
 
 struct proc *initproc;
 
@@ -35,10 +35,10 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-extern uint64 cas(volatile void *addr , int expected , int newval);
+extern uint64 cas(volatile void *addr , uint64 expected , uint64 newval);
 
-extern void push(int *head, struct proc *p, struct spinlock *lock);
-extern int pop(int *head, struct spinlock *list_lock);
+extern int pop(int *head, struct spinlock *lock);
+extern void push(int *head,struct proc *p, struct spinlock *list_lock);
 extern int remove(int *head, struct proc* p, struct spinlock *list_lock);
 
 // helps ensure that wakeups of wait()ing
@@ -62,6 +62,27 @@ proc_mapstacks(pagetable_t kpgtbl) {
     kvmmap(kpgtbl, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
   }
 }
+
+void
+update_least_used_cpu(struct cpu *c)
+{
+  uint64 cur;
+  do
+  {
+    cur = c->process_counter;
+  } while (cas(&least_used_cpu, cur, cur+1));
+  struct cpu *c1;
+  int i = 0;
+  for(c1 = cpus; c < &cpus[NCPU];c1++, i++)
+  {
+    if(c1->process_counter < c->process_counter)
+    {
+      least_used_cpu = i;
+      c = c1;
+    }
+  }
+}
+
 
 // initialize the proc table at boot time.
 void
@@ -285,6 +306,7 @@ userinit(void)
   struct cpu *c = &cpus[0];
   //printf("userinit: proc %d\n", p->index);
   push(&c->runnable_list, p, &c->list_lock);
+  
   p->state = RUNNABLE;
 
   release(&p->lock);
@@ -350,12 +372,13 @@ fork(void)
 
   acquire(&wait_lock);
   np->parent = p;
-  np->cpu_num = p->cpu_num;
+  np->cpu_num = least_used_cpu;
   release(&wait_lock);
 
   acquire(&np->lock);
   struct cpu *c = &cpus[np->cpu_num];
   push(&c->runnable_list, np, &c->list_lock);
+  update_least_used_cpu(c);
   np->state = RUNNABLE;
   release(&np->lock);
 
@@ -585,12 +608,13 @@ sleep(void *chan, struct spinlock *lk)
   // so it's okay to release lk.
 
   acquire(&p->lock);  //DOC: sleeplock1
-  release(lk);
-
-  // Go to sleep.
   p->chan = chan;
   //printf("sleep: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   push(&sleeping_list, p, &sleeping_list_lock);
+  release(lk);
+
+  // Go to sleep.
+
   p->state = SLEEPING;
 
   sched();
@@ -623,9 +647,11 @@ wakeup(void *chan)
     release(&sleeping_list_lock);
     p1->next = -1;
     release(&p1->node_lock);
+    p1->cpu_num = least_used_cpu;
     struct cpu *c = &cpus[p1->cpu_num];
     //printf("wakup: proc %d cpu %d state %s\n", p1->index, p1->cpu_num, states[p1->state]);
     push(&c->runnable_list, p1, &c->list_lock);
+    update_least_used_cpu(c);
     p1->state = RUNNABLE;
     release(&p1->lock);
     if(sleeping_list == -1)
@@ -775,51 +801,49 @@ get_cpu()
   return myproc()->cpu_num;
 }
 
-void push(int *head, struct proc *p, struct spinlock *list_lock)
+int pop(int *head, struct spinlock *list_lock)
 {
   acquire(list_lock);
+  if(*head == -1)
+  {
+    release(list_lock);
+    return -1;
+  }
+  struct proc *p = &proc[*head];
   acquire(&p->node_lock);
   //printf("push list: %x proc: %d\n", head, p->index);
-  p->next = *head;
-  *head = p->index;
+  *head = p->next;
+  p->next = -1;
   release(&p->node_lock);
   release(list_lock);
+  return p->index;
 }
 
-int pop(int *head, struct spinlock *list_lock)
+void push(int *head,struct proc *p, struct spinlock *list_lock)
 {
   acquire(list_lock);
   int first = *head;
   if(first == -1)
   {
+    *head = p->index;
+    p->next = -1;
     release(list_lock);
-    return -1;  
+    return;  
   }
   struct proc *p1 = &proc[first];
+  struct proc *p2;
   acquire(&p1->node_lock);
-  if(p1->next == -1)
-  {
-    *head = p1->next;
-    p1->next = -1;
-    release(&p1->node_lock);
-    release(list_lock);
-    return p1->index;
-  }
   release(list_lock);
-  struct proc *p2 = &proc[p1->next];
-  acquire(&p2->node_lock);
-  while(p2->next != -1)
+  while(p1->next != -1)
   {
-    release(&p1->node_lock);
-    p1 = p2;
-    p2 = &proc[p2->next];
-    acquire(&p2->node_lock);
+    p2 = p1;
+    p1 = &proc[p1->next];
+    acquire(&p1->node_lock);
+    release(&p2->node_lock);
   }
-  p1->next = p2->next;
-  release(&p2->node_lock);
+  p1->next = p->index;
+  p->next = -1;
   release(&p1->node_lock);
-  //printf("pop list: %x proc: %d\n", head, p2->index);
-  return p2->index;
 }
  
 int remove(int *head, struct proc *p, struct spinlock *list_lock)
@@ -865,5 +889,4 @@ int remove(int *head, struct proc *p, struct spinlock *list_lock)
   release(&p1->node_lock);
   return p2->next;
 }
-
 
