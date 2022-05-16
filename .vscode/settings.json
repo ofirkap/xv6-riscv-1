@@ -4,6 +4,7 @@
         "__node_handle": "c",
         "queue": "c",
         "iterator": "c",
-        "cstdio": "c"
+        "cstdio": "c",
+        "ios": "c"
     }
 }
