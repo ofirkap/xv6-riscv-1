@@ -183,7 +183,6 @@ allocproc(void)
   p->pid = allocpid();
   p->state = USED;
   p->next = -1;
-  //printf("alloc: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     freeproc(p);
@@ -214,7 +213,6 @@ allocproc(void)
 static void
 freeproc(struct proc *p)
 {
-  //printf("freeproc: proc %d state %s\n", p->index, states[p->state]);
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -314,7 +312,6 @@ userinit(void)
   update_least_used_cpu(p->cpu_num);
 
   struct cpu *c = &cpus[p->cpu_num];
-  //printf("userinit: proc %d\n", p->index);
   push(&c->runnable_list, p, &c->list_lock);
   
   p->state = RUNNABLE;
@@ -354,7 +351,6 @@ fork(void)
   if((np = allocproc()) == 0){
     return -1;
   }
-  //printf("fork : from %d state %s to %d state %s\n", p->index, states[p->state], np->index, states[np->state]);
   // Copy user memory from parent to child.
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
@@ -452,7 +448,6 @@ exit(int status)
   p->xstate = status;
   push(&zombie_list, p, &zombie_list_lock);
   p->state = ZOMBIE;
-  //printf("exit: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   release(&wait_lock);
 
   // Jump into the scheduler, never to return.
@@ -527,21 +522,18 @@ scheduler(void)
     // Avoid deadlock by ensuring that devices can interrupt.
     intr_on();
     int i = pop(&c->runnable_list, &c->list_lock);
-    //printf("cpu %d: i = %d\n", cpuid(), i);
 
     //Task 4.3 if idle then steal a procces from another cpu
-    struct cpu *c1;
 
     #ifdef ON
+    struct cpu *c1;
     if(i == -1)
     {
       for(c1 = cpus; c1 < &cpus[CPUS]; c1++)
       {
         i = pop(&c1->runnable_list, &c1->list_lock);
-        //printf("cpu %d: tryin to steal: i = %d\n", cpuid(), i);
         if(i != -1)
         {
-          //printf("cpu %d: stole: i = %d\n", cpuid(), i);
           break;
         }
       }
@@ -550,7 +542,6 @@ scheduler(void)
     if(i != -1) 
     {
       p = &proc[i];
-      //printf("cpu %d: sched: proc %d cpu %d state %s\n", cpuid(), p->index, p->cpu_num, states[p->state]);
       acquire(&p->lock);
 
       p->cpu_num = cpuid();
@@ -604,7 +595,6 @@ yield(void)
   struct proc *p = myproc();
   acquire(&p->lock);
   struct cpu *c = &cpus[p->cpu_num];
-  //printf("yield: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   push(&c->runnable_list, p, &c->list_lock);
   p->state = RUNNABLE;
   sched();
@@ -647,7 +637,6 @@ sleep(void *chan, struct spinlock *lk)
 
   acquire(&p->lock);  //DOC: sleeplock1
   p->chan = chan;
-  //printf("sleep: proc %d cpu %d state %s\n", p->index, p->cpu_num, states[p->state]);
   push(&sleeping_list, p, &sleeping_list_lock);
   release(lk);
 
@@ -689,7 +678,6 @@ wakeup(void *chan)
       p1->cpu_num = least_used_cpu_num;
       update_least_used_cpu(p1->cpu_num);
     #endif
-    //printf("wakup: proc %d cpu %d state %s\n", p1->index, p1->cpu_num, states[p1->state]);
     struct cpu *c = &cpus[p1->cpu_num];
     push(&c->runnable_list, p1, &c->list_lock);
     p1->state = RUNNABLE;
@@ -717,7 +705,6 @@ wakeup(void *chan)
         p1->cpu_num = least_used_cpu_num;
         update_least_used_cpu(p1->cpu_num);
       #endif
-      //printf("wakup: proc %d cpu %d state %s\n", p1->index, p1->cpu_num, states[p1->state]);
       struct cpu *c = &cpus[p2->cpu_num];
       push(&c->runnable_list, p2, &c->list_lock);
       p2->state = RUNNABLE;
@@ -866,7 +853,6 @@ int pop(int *head, struct spinlock *list_lock)
   }
   struct proc *p = &proc[*head];
   acquire(&p->node_lock);
-  //printf("push list: %x proc: %d\n", head, p->index);
   *head = p->next;
   p->next = -1;
   release(&p->node_lock);
